@@ -4,6 +4,8 @@ import com.creator.model.User;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
 
+import java.util.List;
+
 /**
  * Data access layer for User entities.
  *
@@ -14,4 +16,16 @@ import org.springframework.stereotype.Repository;
  */
 @Repository
 public interface UserRepository extends JpaRepository<User, String> {
+
+    /**
+     * Find all users belonging to a specific agency.
+     * Used by GET /users to list only the caller's own agency's users.
+     */
+    List<User> findByAgencyId(String agencyId);
+
+    /**
+     * Check if a user with the given email already exists.
+     * Used to prevent duplicate invitations.
+     */
+    boolean existsByEmail(String email);
 }
