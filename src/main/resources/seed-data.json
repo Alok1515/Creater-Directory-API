@@ -1,0 +1,34 @@
+{
+  "agencies": [
+    { "id": "a1", "name": "Nova Talent", "plan": "free" },
+    { "id": "a2", "name": "Bright Star Agency", "plan": "pro" },
+    { "id": "a3", "name": "Solo Creators Co", "plan": "free" }
+  ],
+  "users": [
+    { "id": "u1", "agencyId": "a1", "email": "owner@nova.com", "role": "owner" },
+    { "id": "u2", "agencyId": "a1", "email": "admin@nova.com", "role": "admin" },
+    { "id": "u3", "agencyId": "a2", "email": "owner@brightstar.com", "role": "owner" },
+    { "id": "u4", "agencyId": "a3", "email": "owner@solo.com", "role": "owner" }
+  ],
+  "creators": [
+    {
+      "id": "c1", "name": "Priya Sharma", "niche": "beauty", "followerCount": 45000, "engagementRate": 3.8, "email": "priya@example.com",
+      "agencyLinks": [
+        { "agencyId": "a1", "notes": "Great for skincare campaigns", "addedAt": "2026-01-10T00:00:00Z" },
+        { "agencyId": "a2", "notes": "Booked for Q1 shoot", "addedAt": "2026-02-01T00:00:00Z" }
+      ]
+    },
+    {
+      "id": "c2", "name": "Rahul Verma", "niche": "fitness", "followerCount": 120000, "engagementRate": 2.1, "email": "rahul@example.com",
+      "agencyLinks": [
+        { "agencyId": "a2", "notes": "High reach, slower replies", "addedAt": "2026-01-15T00:00:00Z" }
+      ]
+    },
+    {
+      "id": "c3", "name": "Ananya Iyer", "niche": "travel", "followerCount": 8000, "engagementRate": 6.4, "email": "ananya@example.com",
+      "agencyLinks": [
+        { "agencyId": "a1", "notes": "Micro-influencer, very responsive", "addedAt": "2026-01-20T00:00:00Z" }
+      ]
+    }
+  ]
+}
