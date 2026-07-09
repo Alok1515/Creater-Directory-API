@@ -1,8 +1,11 @@
 package com.creator.service;
 
 import com.creator.dto.AgencyLinkDto;
+import com.creator.dto.CreateCreatorRequest;
 import com.creator.dto.CreatorResponse;
+import com.creator.dto.LinkCreatorRequest;
 import com.creator.dto.PaginatedResponse;
+import com.creator.exception.DuplicateResourceException;
 import com.creator.exception.PlanLimitExceededException;
 import com.creator.exception.ResourceNotFoundException;
 import com.creator.model.Agency;
@@ -22,10 +25,12 @@ import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Instant;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.UUID;
 import java.util.stream.Collectors;
 
 /**
@@ -252,6 +257,88 @@ public class CreatorService {
                 throw new PlanLimitExceededException();
             }
         }
+    }
+
+    /**
+     * Create a new creator and automatically link it to the caller's agency.
+     *
+     * Steps:
+     * 1. Enforce free-plan limit (throws 402 if exceeded).
+     * 2. Create and persist the shared Creator entity.
+     * 3. Create the AgencyCreatorLink binding the creator to the caller's agency.
+     * 4. Return the response with the caller's own link data.
+     */
+    @Transactional
+    public CreatorResponse createCreator(CreateCreatorRequest request) {
+        String agencyId = TenantContext.getCurrentAgencyId();
+        log.debug("Creating new creator for agency '{}'", agencyId);
+
+        // Step 1: Enforce plan limit
+        enforcePlanLimit(agencyId);
+
+        // Step 2: Create the shared creator record
+        Creator creator = Creator.builder()
+                .id(UUID.randomUUID().toString())
+                .name(request.getName())
+                .niche(request.getNiche())
+                .followerCount(request.getFollowerCount())
+                .engagementRate(request.getEngagementRate())
+                .email(request.getEmail())
+                .build();
+        creator = creatorRepository.save(creator);
+
+        // Step 3: Link to the caller's agency
+        AgencyCreatorLink link = AgencyCreatorLink.builder()
+                .agencyId(agencyId)
+                .creatorId(creator.getId())
+                .notes(request.getNotes())
+                .addedAt(Instant.now())
+                .build();
+        link = linkRepository.save(link);
+
+        log.info("Created creator '{}' and linked to agency '{}'", creator.getId(), agencyId);
+        return toResponse(creator, link);
+    }
+
+    /**
+     * Link an existing creator to the caller's agency with optional notes.
+     *
+     * Steps:
+     * 1. Enforce free-plan limit (throws 402 if exceeded).
+     * 2. Verify the creator exists (throws 404 if not).
+     * 3. Verify no duplicate link exists (throws 409 if already linked).
+     * 4. Create the AgencyCreatorLink.
+     * 5. Return the response with the caller's own link data.
+     */
+    @Transactional
+    public CreatorResponse linkCreatorToAgency(String creatorId, LinkCreatorRequest request) {
+        String agencyId = TenantContext.getCurrentAgencyId();
+        log.debug("Linking creator '{}' to agency '{}'", creatorId, agencyId);
+
+        // Step 1: Enforce plan limit
+        enforcePlanLimit(agencyId);
+
+        // Step 2: Verify the creator exists
+        Creator creator = creatorRepository.findById(creatorId)
+                .orElseThrow(() -> new ResourceNotFoundException("Creator", "id", creatorId));
+
+        // Step 3: Check for duplicate link
+        if (linkRepository.existsByAgencyIdAndCreatorId(agencyId, creatorId)) {
+            throw new DuplicateResourceException(
+                    "Creator '" + creatorId + "' is already linked to your agency");
+        }
+
+        // Step 4: Create the link
+        AgencyCreatorLink link = AgencyCreatorLink.builder()
+                .agencyId(agencyId)
+                .creatorId(creatorId)
+                .notes(request != null ? request.getNotes() : null)
+                .addedAt(Instant.now())
+                .build();
+        link = linkRepository.save(link);
+
+        log.info("Linked existing creator '{}' to agency '{}'", creatorId, agencyId);
+        return toResponse(creator, link);
     }
 
     /**
