@@ -5,6 +5,7 @@ import com.creator.dto.CreateCreatorRequest;
 import com.creator.dto.CreatorResponse;
 import com.creator.dto.LinkCreatorRequest;
 import com.creator.dto.PaginatedResponse;
+import com.creator.dto.UpdateCreatorRequest;
 import com.creator.exception.DuplicateResourceException;
 import com.creator.exception.PlanLimitExceededException;
 import com.creator.exception.ResourceNotFoundException;
@@ -339,6 +340,89 @@ public class CreatorService {
 
         log.info("Linked existing creator '{}' to agency '{}'", creatorId, agencyId);
         return toResponse(creator, link);
+    }
+
+    /**
+     * Update a creator's shared fields and/or the caller's agency-specific notes.
+     *
+     * Design decision: A single PATCH endpoint handles both types of updates.
+     * - Shared fields (name, niche, followerCount, engagementRate, email) update
+     *   the Creator entity — visible to all linked agencies.
+     * - The 'notes' field updates ONLY the caller's own AgencyCreatorLink.notes —
+     *   never another agency's notes.
+     * - Only non-null fields are applied (true PATCH semantics).
+     *
+     * Tenant check: The caller must be linked to this creator, otherwise 404.
+     */
+    @Transactional
+    public CreatorResponse updateCreator(String creatorId, UpdateCreatorRequest request) {
+        String agencyId = TenantContext.getCurrentAgencyId();
+        log.debug("Updating creator '{}' for agency '{}'", creatorId, agencyId);
+
+        // Verify the caller's agency is linked to this creator
+        AgencyCreatorLink link = linkRepository.findByAgencyIdAndCreatorId(agencyId, creatorId)
+                .orElseThrow(() -> new ResourceNotFoundException("Creator", "id", creatorId));
+
+        // Fetch the creator
+        Creator creator = creatorRepository.findById(creatorId)
+                .orElseThrow(() -> new ResourceNotFoundException("Creator", "id", creatorId));
+
+        // Apply shared field updates (only non-null fields)
+        if (request.getName() != null) {
+            creator.setName(request.getName());
+        }
+        if (request.getNiche() != null) {
+            creator.setNiche(request.getNiche());
+        }
+        if (request.getFollowerCount() != null) {
+            creator.setFollowerCount(request.getFollowerCount());
+        }
+        if (request.getEngagementRate() != null) {
+            creator.setEngagementRate(request.getEngagementRate());
+        }
+        if (request.getEmail() != null) {
+            creator.setEmail(request.getEmail());
+        }
+        creator = creatorRepository.save(creator);
+
+        // Apply agency-specific notes update (only the caller's own notes)
+        if (request.getNotes() != null) {
+            link.setNotes(request.getNotes());
+            link = linkRepository.save(link);
+        }
+
+        log.info("Updated creator '{}' for agency '{}'", creatorId, agencyId);
+        return toResponse(creator, link);
+    }
+
+    /**
+     * Unlink a creator from the caller's agency.
+     *
+     * This removes ONLY the caller's AgencyCreatorLink — not the creator globally.
+     * If the caller's agency was the last one linked, the creator record is also
+     * deleted (cleanup of orphaned records).
+     *
+     * Returns 404 if the caller's agency is not linked to this creator.
+     */
+    @Transactional
+    public void unlinkCreator(String creatorId) {
+        String agencyId = TenantContext.getCurrentAgencyId();
+        log.debug("Unlinking creator '{}' from agency '{}'", creatorId, agencyId);
+
+        // Verify the caller's agency is linked
+        if (!linkRepository.existsByAgencyIdAndCreatorId(agencyId, creatorId)) {
+            throw new ResourceNotFoundException("Creator", "id", creatorId);
+        }
+
+        // Remove only this agency's link
+        linkRepository.deleteByAgencyIdAndCreatorId(agencyId, creatorId);
+        log.info("Unlinked creator '{}' from agency '{}'", creatorId, agencyId);
+
+        // If no agency is linked to this creator anymore, delete the orphaned record
+        if (!linkRepository.existsByCreatorId(creatorId)) {
+            creatorRepository.deleteById(creatorId);
+            log.info("Deleted orphaned creator '{}' — no agencies linked", creatorId);
+        }
     }
 
     /**
