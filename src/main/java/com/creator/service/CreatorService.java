@@ -3,9 +3,13 @@ package com.creator.service;
 import com.creator.dto.AgencyLinkDto;
 import com.creator.dto.CreatorResponse;
 import com.creator.dto.PaginatedResponse;
+import com.creator.exception.PlanLimitExceededException;
+import com.creator.exception.ResourceNotFoundException;
+import com.creator.model.Agency;
 import com.creator.model.AgencyCreatorLink;
 import com.creator.model.Creator;
 import com.creator.repository.AgencyCreatorLinkRepository;
+import com.creator.repository.AgencyRepository;
 import com.creator.repository.CreatorRepository;
 import com.creator.security.TenantContext;
 import org.slf4j.Logger;
@@ -21,6 +25,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.stream.Collectors;
 
 /**
@@ -39,13 +44,18 @@ public class CreatorService {
 
     private static final Logger log = LoggerFactory.getLogger(CreatorService.class);
 
+    private static final int FREE_PLAN_CREATOR_LIMIT = 5;
+
     private final CreatorRepository creatorRepository;
     private final AgencyCreatorLinkRepository linkRepository;
+    private final AgencyRepository agencyRepository;
 
     public CreatorService(CreatorRepository creatorRepository,
-                          AgencyCreatorLinkRepository linkRepository) {
+                          AgencyCreatorLinkRepository linkRepository,
+                          AgencyRepository agencyRepository) {
         this.creatorRepository = creatorRepository;
         this.linkRepository = linkRepository;
+        this.agencyRepository = agencyRepository;
     }
 
     /**
@@ -192,6 +202,56 @@ public class CreatorService {
         String field = (sortBy != null && !sortBy.isBlank()) ? sortBy : "followerCount";
         Sort.Direction direction = "asc".equalsIgnoreCase(order) ? Sort.Direction.ASC : Sort.Direction.DESC;
         return Sort.by(direction, field);
+    }
+
+    /**
+     * Get a single creator by ID — but ONLY if the caller's agency is linked to it.
+     *
+     * If the creator exists but the caller's agency has no link, we return 404
+     * (not 403) to avoid revealing that the record exists to other tenants.
+     * This is a deliberate security measure specified in the challenge.
+     */
+    @Transactional(readOnly = true)
+    public CreatorResponse getCreatorById(String creatorId) {
+        String agencyId = TenantContext.getCurrentAgencyId();
+        log.debug("Getting creator '{}' for agency '{}'", creatorId, agencyId);
+
+        // Check if the caller's agency is linked to this creator
+        Optional<AgencyCreatorLink> linkOpt = linkRepository.findByAgencyIdAndCreatorId(agencyId, creatorId);
+
+        if (linkOpt.isEmpty()) {
+            // Return 404 — don't reveal whether the creator exists at all
+            throw new ResourceNotFoundException("Creator", "id", creatorId);
+        }
+
+        // Fetch the creator entity
+        Creator creator = creatorRepository.findById(creatorId)
+                .orElseThrow(() -> new ResourceNotFoundException("Creator", "id", creatorId));
+
+        return toResponse(creator, linkOpt.get());
+    }
+
+    /**
+     * Enforces the free-plan creator limit.
+     *
+     * Free-plan agencies may link to a maximum of 5 creators. If the agency
+     * is on the free plan and already has 5 links, this method throws
+     * PlanLimitExceededException (HTTP 402).
+     *
+     * Pro-plan agencies have no limit — this method is a no-op for them.
+     */
+    public void enforcePlanLimit(String agencyId) {
+        Agency agency = agencyRepository.findById(agencyId)
+                .orElseThrow(() -> new ResourceNotFoundException("Agency", "id", agencyId));
+
+        if ("free".equalsIgnoreCase(agency.getPlan())) {
+            long currentLinkCount = linkRepository.countByAgencyId(agencyId);
+            if (currentLinkCount >= FREE_PLAN_CREATOR_LIMIT) {
+                log.info("Agency '{}' (free plan) has reached the {} creator limit. Current count: {}",
+                        agencyId, FREE_PLAN_CREATOR_LIMIT, currentLinkCount);
+                throw new PlanLimitExceededException();
+            }
+        }
     }
 
     /**
