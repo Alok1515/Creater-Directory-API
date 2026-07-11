@@ -12,7 +12,7 @@ target/
 .classpath
 .factorypath
 
-# --- OS files ---
+# --- OS files --- 
 .DS_Store
 Thumbs.db
 
